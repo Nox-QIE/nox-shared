@@ -1,0 +1,19 @@
+{
+  "name": "nox-shared",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "engine",
+    "crypto-spec",
+    "config"
+  ],
+  "scripts": {
+    "build": "tsc -b engine",
+    "test": "vitest run",
+    "typecheck": "tsc -b engine --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.9",
+    "vitest": "^3.2.7"
+  }
+}
