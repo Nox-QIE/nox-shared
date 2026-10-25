@@ -8,24 +8,36 @@
     "config"
   ],
   "scripts": {
-    "build": "tsc -b engine",
+    "build": "tsc -b engine crypto-spec",
     "test": "vitest run",
-    "typecheck": "tsc -b engine --noEmit",
-    "prepare": "tsc -b engine"
+    "typecheck": "tsc -b engine crypto-spec --noEmit",
+    "prepare": "tsc -b engine crypto-spec",
+    "vectors": "node --import tsx crypto-spec/scripts/vectors.ts"
   },
   "devDependencies": {
     "typescript": "5.9",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "tsx": "^4.23.15"
   },
   "version": "0.1.0",
   "exports": {
     "./engine": {
       "types": "./engine/dist/index.d.ts",
       "import": "./engine/dist/index.js"
+    },
+    "./crypto-spec": {
+      "types": "./crypto-spec/dist/index.d.ts",
+      "import": "./crypto-spec/dist/index.js"
     }
   },
   "files": [
     "engine/dist",
-    "engine/package.json"
-  ]
+    "engine/package.json",
+    "crypto-spec/dist",
+    "crypto-spec/package.json",
+    "crypto-spec/vectors"
+  ],
+  "dependencies": {
+    "viem": "^2.57.0"
+  }
 }
