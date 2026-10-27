@@ -9,14 +9,15 @@ const WEREWOLVES_BY_COUNT: Record<number, number> = {
 
 /**
  * Role multiset for a player count. One seer and one doctor at every size; the extended set turns
- * one villager into the hunter from 6 players and another into the witch from 8.
+ * one villager into the hunter from 6 players, another into cupid from 7 and another into the witch
+ * from 8.
  */
 export function roleComposition(playerCount: number, roleSet: RoleSet = "classic"): Role[] {
   const wolves = WEREWOLVES_BY_COUNT[playerCount];
   if (wolves === undefined) {
     throw new GameRuleError("bad_player_count", `player count must be ${MIN_PLAYERS}-${MAX_PLAYERS}, got ${playerCount}`);
   }
-  const extra: Role[] = roleSet === "extended" ? [...(playerCount >= 6 ? ["hunter" as const] : []), ...(playerCount >= 8 ? ["witch" as const] : [])] : [];
+  const extra: Role[] = roleSet === "extended" ? [...(playerCount >= 6 ? ["hunter" as const] : []), ...(playerCount >= 7 ? ["cupid" as const] : []), ...(playerCount >= 8 ? ["witch" as const] : [])] : [];
   const villagers = playerCount - wolves - 2 - extra.length;
   return [
     ...Array<Role>(wolves).fill("werewolf"),

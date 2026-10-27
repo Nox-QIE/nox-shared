@@ -7,15 +7,15 @@ import { concat, encodeAbiParameters, getAddress, keccak256, toBytes, toHex, typ
  */
 export const SPEC_VERSION = 1;
 
-export type Role = "werewolf" | "seer" | "doctor" | "villager" | "hunter" | "witch";
-export type NightActionKind = "kill" | "inspect" | "protect" | "heal" | "poison" | "shoot";
+export type Role = "werewolf" | "seer" | "doctor" | "villager" | "hunter" | "witch" | "cupid";
+export type NightActionKind = "kill" | "inspect" | "protect" | "heal" | "poison" | "shoot" | "link";
 
 /**
- * uint8 codes used on-chain. 0 is reserved as "none". Codes are only ever added (hunter, witch and
- * their actions came later): the leaf and action hash formats are unchanged, so SPEC_VERSION stays.
+ * uint8 codes used on-chain. 0 is reserved as "none". Codes are only ever added (hunter, witch, cupid
+ * and their actions came later): the leaf and action hash formats are unchanged, so SPEC_VERSION stays.
  */
-export const ROLE_CODE: Record<Role, number> = { villager: 1, werewolf: 2, seer: 3, doctor: 4, hunter: 5, witch: 6 };
-export const ACTION_CODE: Record<NightActionKind, number> = { kill: 1, inspect: 2, protect: 3, heal: 4, poison: 5, shoot: 6 };
+export const ROLE_CODE: Record<Role, number> = { villager: 1, werewolf: 2, seer: 3, doctor: 4, hunter: 5, witch: 6, cupid: 7 };
+export const ACTION_CODE: Record<NightActionKind, number> = { kill: 1, inspect: 2, protect: 3, heal: 4, poison: 5, shoot: 6, link: 7 };
 
 /** Teams as uint8 codes, matching NoxGame.Team. */
 export const TEAM_CODE = { village: 1, wolves: 2 } as const;

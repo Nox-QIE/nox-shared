@@ -22,6 +22,7 @@ const ACTION_BY_ROLE: Partial<Record<Role, NightActionKind>> = {
   werewolf: "kill",
   seer: "inspect",
   doctor: "protect",
+  cupid: "link",
 };
 /** The witch's two potions, each once per game; she picks one per night. */
 const POTIONS = ["heal", "poison"] as const;
@@ -49,6 +50,7 @@ export function createGame(assignments: readonly RoleAssignment[], config: GameC
     winner: null,
     potionsUsed: {},
     pendingShot: null,
+    lovers: null,
   };
   return { state, events: [{ type: "night_started", round: 1, visibility: PUBLIC }] };
 }
@@ -120,6 +122,8 @@ function nightAction(state: GameState, actor: string, target: string, asked?: Ni
   const t = requireAlive(state, target, "target");
   if (kind === "kill" && t.role === "werewolf") throw new GameRuleError("bad_target", "werewolves cannot target werewolves");
   if (kind === "inspect" && target === actor) throw new GameRuleError("bad_target", "seer cannot inspect self");
+  if (kind === "link" && state.round !== 1) throw new GameRuleError("link_once", "cupid links only on the first night");
+  if (kind === "link" && target === actor) throw new GameRuleError("bad_target", "cupid links themself to another player");
   if (state.nightActions[actor]) throw new GameRuleError("already_acted", `${actor} already acted this night`);
 
   const next: GameState = { ...state, potionsUsed, nightActions: { ...state.nightActions, [actor]: { kind, target } } };
@@ -179,6 +183,11 @@ function endNight(state: GameState): Transition {
   const poisonedTarget = actions.find(([, a]) => a.kind === "poison")?.[1].target;
   const poisoned = poisonedTarget && poisonedTarget !== eliminated ? poisonedTarget : null;
 
+  // Cupid's link takes effect tonight: if a lover dies tonight, the other follows.
+  const link = actions.find(([, a]) => a.kind === "link");
+  const lovers: GameState["lovers"] = link ? [link[0], link[1].target] : state.lovers;
+  if (link) events.push({ type: "lovers_linked", lovers: lovers!, visibility: only(...lovers!) });
+
   const players = { ...state.players };
   if (eliminated) players[eliminated] = { ...players[eliminated]!, alive: false };
   if (poisoned) players[poisoned] = { ...players[poisoned]!, alive: false };
@@ -188,9 +197,10 @@ function endNight(state: GameState): Transition {
     const role = state.config.revealOnDeath ? players[poisoned]!.role : null;
     events.push({ type: "player_died", round: state.round, id: poisoned, cause: "poison", revealedRole: role, visibility: PUBLIC });
   }
+  const broken = heartbreak(state, players, lovers, events);
 
-  const after: GameState = { ...state, players, nightActions: {} };
-  return hunterOr(after, events, [eliminated, poisoned], "day");
+  const after: GameState = { ...state, players, lovers, nightActions: {} };
+  return hunterOr(after, events, [eliminated, poisoned, broken], "day");
 }
 
 function vote(state: GameState, voter: string, target: string): Transition {
@@ -218,9 +228,25 @@ function endDay(state: GameState): Transition {
   const events: GameEvent[] = [
     { type: "day_resolved", round: state.round, eliminated, revealedRole, tally, visibility: PUBLIC },
   ];
+  const broken = heartbreak(state, players, state.lovers, events);
 
   const after: GameState = { ...state, players, votes: {} };
-  return hunterOr(after, events, [eliminated], "night");
+  return hunterOr(after, events, [eliminated, broken], "night");
+}
+
+/**
+ * One lover dead and the other still alive: the other dies of a broken heart (mutates `players`,
+ * appends the event). Returns who died, if anyone.
+ */
+function heartbreak(state: GameState, players: Record<string, PlayerState>, lovers: GameState["lovers"], events: GameEvent[]): string | null {
+  if (!lovers) return null;
+  const [a, b] = lovers;
+  const other = !players[a]!.alive && players[b]!.alive ? b : !players[b]!.alive && players[a]!.alive ? a : null;
+  if (!other) return null;
+  players[other] = { ...players[other]!, alive: false };
+  const revealedRole = state.config.revealOnDeath ? players[other]!.role : null;
+  events.push({ type: "player_died", round: state.round, id: other, cause: "heartbreak", revealedRole, visibility: PUBLIC });
+  return other;
 }
 
 /** Moves on to the next phase, or ends the game when a team has won. */
@@ -256,6 +282,7 @@ function shoot(state: GameState, actor: string | null, target: string | null): T
     players[target] = { ...players[target]!, alive: false };
     const revealedRole = state.config.revealOnDeath ? players[target]!.role : null;
     events.push({ type: "player_died", round: state.round, id: target, cause: "shot", revealedRole, visibility: PUBLIC });
+    heartbreak(state, players, state.lovers, events);
   }
   return proceed({ ...state, players, pendingShot: null }, events, pending.next);
 }
