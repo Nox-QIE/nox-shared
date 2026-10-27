@@ -1,9 +1,12 @@
-export type Role = "werewolf" | "seer" | "doctor" | "villager" | "hunter" | "witch";
+export type Role = "werewolf" | "seer" | "doctor" | "villager" | "hunter" | "witch" | "cupid";
 export type Team = "wolves" | "village";
 export type Phase = "night" | "day" | "ended";
 /** Secret actions committed on chain: the night roles' actions, and the hunter's last shot. */
-export type NightActionKind = "kill" | "inspect" | "protect" | "heal" | "poison" | "shoot";
-/** "classic": werewolves, seer, doctor, villagers. "extended" adds the hunter (6+ players) and the witch (8+). */
+export type NightActionKind = "kill" | "inspect" | "protect" | "heal" | "poison" | "shoot" | "link";
+/**
+ * "classic": werewolves, seer, doctor, villagers. "extended" adds the hunter (6+ players), cupid (7+)
+ * and the witch (8+).
+ */
 export type RoleSet = "classic" | "extended";
 
 export interface RoleAssignment {
@@ -41,6 +44,8 @@ export interface GameState {
   potionsUsed: Readonly<Record<string, readonly ("heal" | "poison")[]>>;
   /** A hunter who just died and must shoot (or pass) before the game goes on to `next`. */
   pendingShot: { hunter: string; next: "day" | "night" } | null;
+  /** The lovers: cupid and the player cupid linked on night 1. When one dies, the other dies too. */
+  lovers: readonly [string, string] | null;
 }
 
 export type Command =
@@ -62,7 +67,9 @@ export type GameEvent =
   /** The wolves have all chosen: the witch learns their victim while she still holds her heal. */
   | { type: "victim_known"; witch: string; target: string; visibility: Visibility }
   /** A death besides the night's victim and the day's exile: the witch's poison or the hunter's shot. */
-  | { type: "player_died"; round: number; id: string; cause: "poison" | "shot"; revealedRole: Role | null; visibility: Visibility }
+  | { type: "player_died"; round: number; id: string; cause: "poison" | "shot" | "heartbreak"; revealedRole: Role | null; visibility: Visibility }
+  /** Cupid's link, told to both lovers only. */
+  | { type: "lovers_linked"; lovers: readonly [string, string]; visibility: Visibility }
   | { type: "hunter_must_shoot"; hunter: string; visibility: Visibility }
   | { type: "day_started"; round: number; visibility: Visibility }
   | { type: "vote_recorded"; voter: string; target: string; visibility: Visibility }

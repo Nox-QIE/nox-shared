@@ -236,7 +236,7 @@ describe("replay & views", () => {
 });
 
 describe("extended roles: hunter and witch", () => {
-  // 8 players: W1 W2 wolves, S seer, Dr doctor, H hunter, Wi witch, V1 V2 villagers
+  // 8 players: W1 W2 wolves, S seer, Dr doctor, H hunter, Wi witch, Cu cupid (not linking), V1 villager
   const EIGHT: RoleAssignment[] = [
     { id: "W1", role: "werewolf" },
     { id: "W2", role: "werewolf" },
@@ -245,7 +245,7 @@ describe("extended roles: hunter and witch", () => {
     { id: "H", role: "hunter" },
     { id: "Wi", role: "witch" },
     { id: "V1", role: "villager" },
-    { id: "V2", role: "villager" },
+    { id: "Cu", role: "cupid" },
   ];
   const EXT = { revealOnDeath: true, roleSet: "extended" as const };
   const start = () => createGame(EIGHT, EXT).state;
@@ -256,7 +256,10 @@ describe("extended roles: hunter and witch", () => {
     expect(roleComposition(7, "extended")).not.toContain("witch");
     const eight = roleComposition(8, "extended");
     expect(eight.filter((r) => r === "witch")).toHaveLength(1);
-    expect(eight.filter((r) => r === "villager")).toHaveLength(2);
+    expect(eight.filter((r) => r === "villager")).toHaveLength(1);
+    expect(eight.filter((r) => r === "cupid")).toHaveLength(1);
+    expect(roleComposition(6, "extended")).not.toContain("cupid");
+    expect(roleComposition(7, "extended")).toContain("cupid");
     expect(roleComposition(8)).not.toContain("hunter");
     expect(code(() => createGame(EIGHT))).toBe("bad_composition"); // classic config rejects them
   });
@@ -270,9 +273,9 @@ describe("extended roles: hunter and witch", () => {
     expect(r.state.players.V1!.alive).toBe(true);
     expect(r.state.potionsUsed).toEqual({ Wi: ["heal"] });
     // The heal is gone: next night she is no longer told, and cannot heal again.
-    const n2 = run(r.state, { type: "end_day" }, { type: "night_action", actor: "W1", target: "V2" }, { type: "night_action", actor: "W2", target: "V2" });
+    const n2 = run(r.state, { type: "end_day" }, { type: "night_action", actor: "W1", target: "S" }, { type: "night_action", actor: "W2", target: "S" });
     expect(n2.events.some((e) => e.type === "victim_known")).toBe(false);
-    expect(code(() => apply(n2.state, { type: "night_action", actor: "Wi", target: "V2", kind: "heal" }))).toBe("potion_used");
+    expect(code(() => apply(n2.state, { type: "night_action", actor: "Wi", target: "S", kind: "heal" }))).toBe("potion_used");
   });
 
   it("poison kills whoever it targets, through the doctor, and is announced as its own death", () => {
@@ -316,7 +319,7 @@ describe("extended roles: hunter and witch", () => {
   });
 
   it("a hunter voted out shoots before the next night, and the shot can decide the game", () => {
-    // Night 1: wolves take V1. Day 1: the village exiles H; H shoots W1. Then W2 alone vs S Dr Wi V2.
+    // Night 1: wolves take V1. Day 1: the village exiles H; H shoots W1. Then W2 alone vs S Dr Wi Cu.
     const day = run(start(), { type: "night_action", actor: "W1", target: "V1" }, { type: "night_action", actor: "W2", target: "V1" }, { type: "end_night" });
     const voted = run(day.state, { type: "vote", voter: "W1", target: "H" }, { type: "vote", voter: "W2", target: "H" }, { type: "end_day" });
     expect(voted.state.pendingShot).toEqual({ hunter: "H", next: "night" });
@@ -345,5 +348,65 @@ describe("extended roles: hunter and witch", () => {
     const r = apply(night.state, { type: "skip_shot" });
     expect(r.state.phase).toBe("day");
     expect(r.events.map((e) => e.type)).toEqual(["day_started"]);
+  });
+});
+
+describe("extended roles: cupid and the lovers", () => {
+  // 7 players: W1 W2 wolves, S seer, Dr doctor, H hunter, Cu cupid, V villager
+  const SEVEN: RoleAssignment[] = [
+    { id: "W1", role: "werewolf" },
+    { id: "W2", role: "werewolf" },
+    { id: "S", role: "seer" },
+    { id: "Dr", role: "doctor" },
+    { id: "H", role: "hunter" },
+    { id: "Cu", role: "cupid" },
+    { id: "V", role: "villager" },
+  ];
+  const EXT = { revealOnDeath: true, roleSet: "extended" as const };
+  const start = () => createGame(SEVEN, EXT).state;
+
+  it("links cupid to one player on night 1, told to the two of them only", () => {
+    const r = run(start(), { type: "night_action", actor: "Cu", target: "V" }, { type: "end_night" });
+    expect(r.state.lovers).toEqual(["Cu", "V"]);
+    const linked = r.events.find((e) => e.type === "lovers_linked");
+    expect(linked).toMatchObject({ lovers: ["Cu", "V"], visibility: { scope: "private", to: ["Cu", "V"] } });
+    expect(eventsFor("S", r.events).some((e) => e.type === "lovers_linked")).toBe(false);
+    expect(JSON.stringify(publicView(r.state, r.events))).not.toContain("lovers");
+  });
+
+  it("only on the first night, and never to themself", () => {
+    expect(code(() => apply(start(), { type: "night_action", actor: "Cu", target: "Cu" }))).toBe("bad_target");
+    const night2 = run(start(), { type: "end_night" }, { type: "end_day" }).state;
+    expect(code(() => apply(night2, { type: "night_action", actor: "Cu", target: "V" }))).toBe("link_once");
+  });
+
+  it("a lover killed at night takes the other along, even the same night they were linked", () => {
+    const r = run(
+      start(),
+      { type: "night_action", actor: "Cu", target: "V" },
+      { type: "night_action", actor: "W1", target: "V" },
+      { type: "night_action", actor: "W2", target: "V" },
+      { type: "end_night" },
+    );
+    expect(r.state.players.V!.alive).toBe(false);
+    expect(r.state.players.Cu!.alive).toBe(false);
+    expect(r.events.find((e) => e.type === "player_died")).toMatchObject({ id: "Cu", cause: "heartbreak", revealedRole: "cupid" });
+  });
+
+  it("an exiled lover takes the other along; a lover who is the hunter still shoots", () => {
+    const day = run(start(), { type: "night_action", actor: "Cu", target: "H" }, { type: "end_night" });
+    const exiled = run(day.state, { type: "vote", voter: "S", target: "Cu" }, { type: "vote", voter: "Dr", target: "Cu" }, { type: "end_day" });
+    expect(exiled.state.players.H!.alive).toBe(false);
+    expect(exiled.state.pendingShot).toEqual({ hunter: "H", next: "night" });
+    const shot = apply(exiled.state, { type: "shoot", actor: "H", target: "W1" });
+    expect(shot.state.players.W1!.alive).toBe(false);
+  });
+
+  it("the hunter's shot at a lover takes the other along", () => {
+    const linked = run(start(), { type: "night_action", actor: "Cu", target: "W2" }, { type: "night_action", actor: "W1", target: "H" }, { type: "end_night" });
+    const shot = apply(linked.state, { type: "shoot", actor: "H", target: "Cu" });
+    expect(shot.state.players.Cu!.alive).toBe(false);
+    expect(shot.state.players.W2!.alive).toBe(false);
+    expect(shot.events.filter((e) => e.type === "player_died").map((e) => e.type === "player_died" && e.cause)).toEqual(["shot", "heartbreak"]);
   });
 });
