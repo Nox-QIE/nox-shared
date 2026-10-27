@@ -23,10 +23,12 @@ const ACTION_BY_ROLE: Partial<Record<Role, NightActionKind>> = {
   seer: "inspect",
   doctor: "protect",
 };
+/** The witch's two potions, each once per game; she picks one per night. */
+const POTIONS = ["heal", "poison"] as const;
 
 /** Create a game that starts at night 1. Validates the role composition. */
 export function createGame(assignments: readonly RoleAssignment[], config: GameConfig = DEFAULT_CONFIG): Transition {
-  const expected = [...roleComposition(assignments.length)].sort();
+  const expected = [...roleComposition(assignments.length, config.roleSet)].sort();
   const actual = assignments.map((a) => a.role).sort();
   if (expected.join() !== actual.join()) {
     throw new GameRuleError("bad_composition", `roles do not match composition for ${assignments.length} players`);
@@ -45,6 +47,8 @@ export function createGame(assignments: readonly RoleAssignment[], config: GameC
     nightActions: {},
     votes: {},
     winner: null,
+    potionsUsed: {},
+    pendingShot: null,
   };
   return { state, events: [{ type: "night_started", round: 1, visibility: PUBLIC }] };
 }
@@ -52,15 +56,22 @@ export function createGame(assignments: readonly RoleAssignment[], config: GameC
 /** Pure state transition. Throws GameRuleError on illegal commands; never mutates input. */
 export function apply(state: GameState, cmd: Command): Transition {
   if (state.phase === "ended") throw new GameRuleError("game_over", "game has ended");
+  if (state.pendingShot && cmd.type !== "shoot" && cmd.type !== "skip_shot") {
+    throw new GameRuleError("shot_pending", "the hunter must shoot first");
+  }
   switch (cmd.type) {
     case "night_action":
-      return nightAction(state, cmd.actor, cmd.target);
+      return nightAction(state, cmd.actor, cmd.target, cmd.kind);
     case "end_night":
       return endNight(state);
     case "vote":
       return vote(state, cmd.voter, cmd.target);
     case "end_day":
       return endDay(state);
+    case "shoot":
+      return shoot(state, cmd.actor, cmd.target);
+    case "skip_shot":
+      return shoot(state, null, null);
   }
 }
 
@@ -91,18 +102,41 @@ function requireAlive(state: GameState, id: string, code: string): PlayerState {
   return p;
 }
 
-function nightAction(state: GameState, actor: string, target: string): Transition {
+function nightAction(state: GameState, actor: string, target: string, asked?: NightActionKind): Transition {
   if (state.phase !== "night") throw new GameRuleError("wrong_phase", "night actions only at night");
   const me = requireAlive(state, actor, "actor");
-  const kind = ACTION_BY_ROLE[me.role];
+  let kind = ACTION_BY_ROLE[me.role];
+  let potionsUsed = state.potionsUsed;
+  if (me.role === "witch") {
+    if (asked !== "heal" && asked !== "poison") throw new GameRuleError("kind_required", "the witch picks heal or poison");
+    const used = state.potionsUsed[actor] ?? [];
+    if (used.includes(asked)) throw new GameRuleError("potion_used", `the ${asked} potion is already used`);
+    if (asked === "poison" && target === actor) throw new GameRuleError("bad_target", "the witch cannot poison herself");
+    kind = asked;
+    potionsUsed = { ...state.potionsUsed, [actor]: [...used, asked] };
+  }
   if (!kind) throw new GameRuleError("no_night_action", `${me.role} has no night action`);
+  if (asked !== undefined && asked !== kind) throw new GameRuleError("bad_kind", `${me.role} cannot ${asked}`);
   const t = requireAlive(state, target, "target");
   if (kind === "kill" && t.role === "werewolf") throw new GameRuleError("bad_target", "werewolves cannot target werewolves");
   if (kind === "inspect" && target === actor) throw new GameRuleError("bad_target", "seer cannot inspect self");
   if (state.nightActions[actor]) throw new GameRuleError("already_acted", `${actor} already acted this night`);
 
-  const next: GameState = { ...state, nightActions: { ...state.nightActions, [actor]: { kind, target } } };
-  return { state: next, events: [{ type: "night_action_recorded", actor, kind, visibility: only(actor) }] };
+  const next: GameState = { ...state, potionsUsed, nightActions: { ...state.nightActions, [actor]: { kind, target } } };
+  const events: GameEvent[] = [{ type: "night_action_recorded", actor, kind, visibility: only(actor) }];
+  // Once every living wolf has chosen, a witch who still holds her heal learns who they chose.
+  if (kind === "kill") {
+    const wolves = alivePlayers(next).filter((id) => next.players[id]!.role === "werewolf");
+    const victim = wolves.every((id) => next.nightActions[id]) ? wolfTarget(next) : null;
+    if (victim) {
+      for (const id of alivePlayers(next)) {
+        if (next.players[id]!.role === "witch" && !(next.potionsUsed[id] ?? []).includes("heal")) {
+          events.push({ type: "victim_known", witch: id, target: victim, visibility: only(id) });
+        }
+      }
+    }
+  }
+  return { state: next, events };
 }
 
 /** Werewolf target = plurality of wolf choices; ties go to the earliest seat. */
@@ -138,20 +172,25 @@ function endNight(state: GameState): Transition {
     events.push({ type: "inspection_result", seer, target: a.target, isWerewolf, visibility: only(seer) });
   }
 
-  const protectedIds = new Set(actions.filter(([, a]) => a.kind === "protect").map(([, a]) => a.target));
+  // The doctor's protection and the witch's heal both stop the wolves; nothing stops the poison.
+  const protectedIds = new Set(actions.filter(([, a]) => a.kind === "protect" || a.kind === "heal").map(([, a]) => a.target));
   const target = wolfTarget(state);
   const eliminated = target && !protectedIds.has(target) ? target : null;
+  const poisonedTarget = actions.find(([, a]) => a.kind === "poison")?.[1].target;
+  const poisoned = poisonedTarget && poisonedTarget !== eliminated ? poisonedTarget : null;
 
   const players = { ...state.players };
   if (eliminated) players[eliminated] = { ...players[eliminated]!, alive: false };
+  if (poisoned) players[poisoned] = { ...players[poisoned]!, alive: false };
   const revealedRole = eliminated && state.config.revealOnDeath ? players[eliminated]!.role : null;
   events.push({ type: "night_resolved", round: state.round, eliminated, revealedRole, visibility: PUBLIC });
+  if (poisoned) {
+    const role = state.config.revealOnDeath ? players[poisoned]!.role : null;
+    events.push({ type: "player_died", round: state.round, id: poisoned, cause: "poison", revealedRole: role, visibility: PUBLIC });
+  }
 
   const after: GameState = { ...state, players, nightActions: {} };
-  return finishOr(after, events, () => ({
-    state: { ...after, phase: "day" },
-    events: [...events, { type: "day_started", round: state.round, visibility: PUBLIC }],
-  }));
+  return hunterOr(after, events, [eliminated, poisoned], "day");
 }
 
 function vote(state: GameState, voter: string, target: string): Transition {
@@ -181,13 +220,44 @@ function endDay(state: GameState): Transition {
   ];
 
   const after: GameState = { ...state, players, votes: {} };
+  return hunterOr(after, events, [eliminated], "night");
+}
+
+/** Moves on to the next phase, or ends the game when a team has won. */
+function proceed(after: GameState, events: GameEvent[], next: "day" | "night"): Transition {
   return finishOr(after, events, () => {
-    const round = state.round + 1;
-    return {
-      state: { ...after, phase: "night", round },
-      events: [...events, { type: "night_started", round, visibility: PUBLIC }],
-    };
+    if (next === "day") {
+      return { state: { ...after, phase: "day" }, events: [...events, { type: "day_started", round: after.round, visibility: PUBLIC }] };
+    }
+    const round = after.round + 1;
+    return { state: { ...after, phase: "night", round }, events: [...events, { type: "night_started", round, visibility: PUBLIC }] };
   });
+}
+
+/** A hunter among the dead shoots before anything else, even before a win is called. */
+function hunterOr(after: GameState, events: GameEvent[], dead: (string | null)[], next: "day" | "night"): Transition {
+  const hunter = dead.find((id) => id && after.players[id]!.role === "hunter");
+  if (!hunter) return proceed(after, events, next);
+  return {
+    state: { ...after, pendingShot: { hunter, next } },
+    events: [...events, { type: "hunter_must_shoot", hunter, visibility: PUBLIC }],
+  };
+}
+
+/** The hunter's last shot (or a pass, when `actor` is null: they let the timer run out). */
+function shoot(state: GameState, actor: string | null, target: string | null): Transition {
+  const pending = state.pendingShot;
+  if (!pending) throw new GameRuleError("no_shot", "no hunter is waiting to shoot");
+  const players = { ...state.players };
+  const events: GameEvent[] = [];
+  if (actor !== null && target !== null) {
+    if (actor !== pending.hunter) throw new GameRuleError("not_hunter", `${actor} is not the hunter who must shoot`);
+    requireAlive(state, target, "target");
+    players[target] = { ...players[target]!, alive: false };
+    const revealedRole = state.config.revealOnDeath ? players[target]!.role : null;
+    events.push({ type: "player_died", round: state.round, id: target, cause: "shot", revealedRole, visibility: PUBLIC });
+  }
+  return proceed({ ...state, players, pendingShot: null }, events, pending.next);
 }
 
 export function winnerOf(state: GameState): Team | null {
