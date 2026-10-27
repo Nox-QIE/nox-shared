@@ -16,6 +16,7 @@ export function publicView(state: GameState, events: readonly GameEvent[]): Publ
     if ((e.type === "night_resolved" || e.type === "day_resolved") && e.eliminated) {
       revealed.set(e.eliminated, e.revealedRole);
     }
+    if (e.type === "player_died") revealed.set(e.id, e.revealedRole);
   }
   const ended = state.phase === "ended";
   return {

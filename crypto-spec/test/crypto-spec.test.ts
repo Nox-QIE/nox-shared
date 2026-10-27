@@ -72,7 +72,8 @@ describe("crypto-spec v1", () => {
   });
 
   it("uses distinct non-zero codes and random 32-byte salts", () => {
-    expect(new Set(Object.values(ROLE_CODE)).size).toBe(4);
+    expect(new Set(Object.values(ROLE_CODE)).size).toBe(6);
+    expect(new Set(Object.values(ACTION_CODE)).size).toBe(6);
     expect(Object.values(ROLE_CODE).concat(Object.values(ACTION_CODE)).every((c) => c > 0)).toBe(true);
     const s = randomBytes32();
     expect(s).toMatch(/^0x[0-9a-f]{64}$/);
